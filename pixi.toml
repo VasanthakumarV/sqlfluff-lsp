@@ -1,0 +1,13 @@
+[workspace]
+authors = ["VasanthakumarV <vasanth260m12@gmail.com>"]
+channels = ["conda-forge"]
+name = "sqlfluff-lsp"
+platforms = ["linux-64", "win-64", "osx-64", "osx-arm64", "linux-aarch64"]
+
+[tasks]
+test = "cargo test"
+
+[dependencies]
+rust = ">=1.91.1,<1.92"
+sqlfluff = ">=3.5.0,<4"
+rust-src = ">=1.91.1,<2"
