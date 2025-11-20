@@ -6,7 +6,7 @@ Language Server for the SQL linting & formatting tool, SQLFluff.
 > The server expects [`sqlfluff`](https://github.com/sqlfluff/sqlfluff) to be installed and already added to the path. 
 
 > [!WARNING]
-> This tool might be rough around the edges, it is not widely tested
+> This tool might be rough around the edges, it is not widely tested.
 
 ## Configuration
 
