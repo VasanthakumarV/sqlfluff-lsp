@@ -1,6 +1,6 @@
 # sqlfluff-lsp
 
-Language Server for SQL Linting & Formatting tool SQLFluff.
+Language Server for the SQL linting & formatting tool, SQLFluff.
 
 > [!WARNING]
 > This tool might be rough around the edges, it is not widely tested
