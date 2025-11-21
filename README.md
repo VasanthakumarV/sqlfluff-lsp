@@ -1,13 +1,13 @@
 # sqlfluff-lsp
 
-[crates.io](https://crates.io/crates/sqlfluff-lsp)
-
----
+| [crates.io](https://crates.io/crates/sqlfluff-lsp) |
 
 Language Server for the SQL linting & formatting tool, SQLFluff.
 
 > [!NOTE]
-> The server expects [`sqlfluff`](https://github.com/sqlfluff/sqlfluff) to be installed and already added to the path. 
+> The server expects [`sqlfluff`](https://github.com/sqlfluff/sqlfluff) to be installed and added to the PATH.\
+> If that is not feasible, pass the absolute path via `--sqlfluff-path` flag,\
+> e.g. `sqlfluff-lsp --dialect=ansi --sqlfluff-path=/Users/vasanth/bin/sqlfluff`.
 
 > [!WARNING]
 > This tool might be rough around the edges, it is not widely tested.

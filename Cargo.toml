@@ -1,6 +1,6 @@
 [package]
 name = "sqlfluff-lsp"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 authors = ["VasanthakumarV <vasanth260m12@gmail.com>"]
 description = "Language Server for the SQL linting & formatting tool, SQLFluff."

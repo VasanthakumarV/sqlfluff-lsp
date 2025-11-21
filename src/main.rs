@@ -15,10 +15,15 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
+    /// Start language server
     Serve {
         /// SQL dialect
         #[arg(short, long)]
         dialect: Option<String>,
+        /// Absolute path to `sqlfluff`, if not supplied
+        /// `sqlfluff` should be in the PATH
+        #[arg(short, long)]
+        sqlfluff_path: Option<String>,
     },
 }
 
@@ -43,8 +48,12 @@ async fn main() {
         .init();
 
     match cli.command {
-        Commands::Serve { dialect } => {
-            let (service, socket) = LspService::new(|client| lsp::Backend::new(client, dialect));
+        Commands::Serve {
+            dialect,
+            sqlfluff_path,
+        } => {
+            let (service, socket) =
+                LspService::new(|client| lsp::Backend::new(client, dialect, sqlfluff_path));
             let (stdin, stdout) = (tokio::io::stdin(), tokio::io::stdout());
             Server::new(stdin, stdout, socket).serve(service).await;
         }
