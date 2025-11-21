@@ -2,7 +2,7 @@ use std::process::Stdio;
 
 use anyhow::Context as _;
 use serde::Deserialize;
-use tokio::io::{self, AsyncWriteExt};
+use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
 use tower_lsp_server::lsp_types::{Diagnostic, DiagnosticSeverity, Position, Range, TextEdit, Uri};
 
@@ -121,14 +121,15 @@ impl Sqlfluff {
         self.cmd.args(args);
         self
     }
-    async fn execute(mut self, content: &str) -> io::Result<std::process::Output> {
+    async fn execute(mut self, content: &str) -> anyhow::Result<std::process::Output> {
         let mut child = self
             .cmd
             .kill_on_drop(true)
             .stdout(Stdio::piped())
             .stdin(Stdio::piped())
             .stderr(Stdio::piped())
-            .spawn()?;
+            .spawn()
+            .with_context(|| format!("{:?} failed", self.cmd))?;
 
         {
             let mut stdin = child
@@ -138,7 +139,7 @@ impl Sqlfluff {
             stdin.write_all(content.as_bytes()).await?;
         }
 
-        child.wait_with_output().await
+        Ok(child.wait_with_output().await?)
     }
 }
 
