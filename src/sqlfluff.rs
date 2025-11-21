@@ -6,6 +6,8 @@ use tokio::io::{self, AsyncWriteExt};
 use tokio::process::Command;
 use tower_lsp_server::lsp_types::{Diagnostic, DiagnosticSeverity, Position, Range, TextEdit, Uri};
 
+use crate::lsp::Config;
+
 #[derive(Deserialize, Debug)]
 struct LintOutput {
     start_line: usize,
@@ -15,13 +17,9 @@ struct LintOutput {
     message: String,
 }
 
-pub async fn lint(
-    uri: &Uri,
-    content: &str,
-    dialect: Option<String>,
-) -> anyhow::Result<Vec<Diagnostic>> {
-    let output = Sqlfluff::new("lint")
-        .dialect(dialect)
+pub async fn lint(uri: &Uri, content: &str, config: Config) -> anyhow::Result<Vec<Diagnostic>> {
+    let output = Sqlfluff::new("lint", config.sqlfluff_path)
+        .dialect(config.dialect)
         .args(&[
             &format!("--stdin-filename={}", uri.path()),
             "--disable-progress-bar",
@@ -66,13 +64,9 @@ pub async fn lint(
     }
 }
 
-pub async fn fmt(
-    uri: &Uri,
-    content: &str,
-    dialect: Option<String>,
-) -> anyhow::Result<Vec<TextEdit>> {
-    let output = Sqlfluff::new("fix")
-        .dialect(dialect)
+pub async fn fmt(uri: &Uri, content: &str, config: Config) -> anyhow::Result<Vec<TextEdit>> {
+    let output = Sqlfluff::new("fix", config.sqlfluff_path)
+        .dialect(config.dialect)
         .args(&[
             &format!("--stdin-filename={}", uri.path()),
             "--disable-progress-bar",
@@ -112,8 +106,8 @@ struct Sqlfluff {
 }
 
 impl Sqlfluff {
-    fn new(command: &str) -> Self {
-        let mut cmd = Command::new("sqlfluff");
+    fn new(command: &str, sqlfluff_path: Option<String>) -> Self {
+        let mut cmd = Command::new(sqlfluff_path.unwrap_or("sqlfluff".to_string()));
         cmd.arg(command);
         Sqlfluff { cmd }
     }
@@ -199,7 +193,10 @@ ORDER BY total_sales DESC
         let text_edits = fmt(
             &Uri::from_str(&file_path.as_os_str().to_string_lossy()).unwrap(),
             sql_file_content,
-            Some("snowflake".to_string()),
+            Config {
+                dialect: Some("snowflake".to_string()),
+                sqlfluff_path: None,
+            },
         )
         .await
         .unwrap();
@@ -224,7 +221,10 @@ FROm customer
         let diagnostics = lint(
             &Uri::from_str(&file_path.as_os_str().to_string_lossy()).unwrap(),
             sql_file_content,
-            Some("snowflake".to_string()),
+            Config {
+                dialect: Some("snowflake".to_string()),
+                sqlfluff_path: None,
+            },
         )
         .await
         .unwrap();

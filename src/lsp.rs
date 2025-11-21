@@ -9,8 +9,14 @@ use crate::sqlfluff;
 #[derive(Debug)]
 pub struct Backend {
     client: Client,
-    dialect: Option<String>,
+    config: Config,
     watchers: RwLock<HashMap<Uri, Watcher>>,
+}
+
+#[derive(Debug, Clone)]
+pub struct Config {
+    pub dialect: Option<String>,
+    pub sqlfluff_path: Option<String>,
 }
 
 #[derive(Debug)]
@@ -20,10 +26,13 @@ struct Watcher {
 }
 
 impl Backend {
-    pub fn new(client: Client, dialect: Option<String>) -> Self {
+    pub fn new(client: Client, dialect: Option<String>, sqlfluff_path: Option<String>) -> Self {
         Self {
             client,
-            dialect,
+            config: Config {
+                dialect,
+                sqlfluff_path,
+            },
             watchers: RwLock::new(HashMap::new()),
         }
     }
@@ -60,7 +69,7 @@ impl LanguageServer for Backend {
             ..
         }: DocumentFormattingParams,
     ) -> Result<Option<Vec<TextEdit>>> {
-        let dialect = self.dialect.clone();
+        let config = self.config.clone();
         if let Some(content) = self
             .watchers
             .read()
@@ -68,7 +77,7 @@ impl LanguageServer for Backend {
             .get(&uri)
             .map(|bar| bar.rx.borrow().clone())
         {
-            let output = match sqlfluff::fmt(&uri, &content, dialect).await {
+            let output = match sqlfluff::fmt(&uri, &content, config).await {
                 Ok(output) => output,
                 Err(error) => {
                     error!("{error}");
@@ -89,7 +98,7 @@ impl LanguageServer for Backend {
             text_document: TextDocumentItem { uri, text, .. },
         }: DidOpenTextDocumentParams,
     ) {
-        let dialect = self.dialect.clone();
+        let config = self.config.clone();
         self.watchers
             .write()
             .await
@@ -104,7 +113,7 @@ impl LanguageServer for Backend {
                     loop {
                         let content = _rx.borrow_and_update().clone();
 
-                        match sqlfluff::lint(&uri, &content, dialect.clone()).await {
+                        match sqlfluff::lint(&uri, &content, config.clone()).await {
                             Ok(diags) => {
                                 client.publish_diagnostics(uri.clone(), diags, None).await;
                             }
