@@ -12,6 +12,28 @@ Language Server for the SQL linting & formatting tool, SQLFluff.
 > [!WARNING]
 > This tool might be rough around the edges, it is not widely tested.
 
+## Installation
+
+From crates.io using `cargo`,
+
+```sh
+cargo install sqlfluff-lsp
+```
+
+Package also published in conda-forge (`sqlfluff` cli is already listed as `sqlfuff-lsp`'s runtime dependency here).
+
+You can use [pixi](https://pixi.sh/latest/) for global installation,
+
+```sh
+pixi global install --expose sqlfluff-lsp --expose sqlfluff sqlfluff-lsp
+```
+
+or within a project,
+
+```sh
+pixi add sqlfluff-lsp
+```
+
 ## Configuration
 
 ### Helix
