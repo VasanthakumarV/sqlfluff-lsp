@@ -14,11 +14,21 @@ Language Server for the SQL linting & formatting tool, SQLFluff.
 
 ## Installation
 
+<details>
+
+<summary>cargo</summary>
+
 From crates.io using `cargo`,
 
 ```sh
 cargo install sqlfluff-lsp
 ```
+
+</details>
+
+<details>
+
+<summary>pixi</summary>
 
 Package also published in conda-forge (`sqlfluff` cli is already listed as `sqlfuff-lsp`'s runtime dependency here).
 
@@ -33,6 +43,8 @@ or within a project,
 ```sh
 pixi add sqlfluff-lsp
 ```
+
+</details>
 
 ## Configuration
 
