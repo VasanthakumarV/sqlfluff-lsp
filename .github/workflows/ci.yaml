@@ -3,7 +3,7 @@ name: CI
 on: [push, pull_request]
 
 jobs:
-  lint-&-test:
+  lint-and-test:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
