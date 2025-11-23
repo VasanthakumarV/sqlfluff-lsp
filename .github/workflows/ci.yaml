@@ -3,7 +3,7 @@ name: CI
 on: [push, pull_request]
 
 jobs:
-  test:
+  lint-&-test:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -12,3 +12,8 @@ jobs:
           cache: true
           cache-write: ${{ github.event_name == 'push' && github.ref_name == 'main' }}
       - run: pixi run test
+        if: success() || failure()
+      - run: pixi run ci-fmt
+        if: success() || failure()
+      - run: pixi run ci-clippy
+        if: success() || failure() 
