@@ -11,9 +11,8 @@ jobs:
         with:
           cache: true
           cache-write: ${{ github.event_name == 'push' && github.ref_name == 'main' }}
-      - run: pixi run test
-        if: success() || failure()
       - run: pixi run ci-fmt
-        if: success() || failure()
       - run: pixi run ci-clippy
         if: success() || failure() 
+      - run: pixi run test
+        if: success() || failure()
