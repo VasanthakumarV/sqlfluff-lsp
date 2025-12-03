@@ -27,7 +27,12 @@ struct Watcher {
 }
 
 impl Backend {
-    pub fn new(client: Client, dialect: Option<String>, templater: Option<String>, sqlfluff_path: Option<String>) -> Self {
+    pub fn new(
+        client: Client,
+        dialect: Option<String>,
+        templater: Option<String>,
+        sqlfluff_path: Option<String>,
+    ) -> Self {
         Self {
             client,
             config: Config {
