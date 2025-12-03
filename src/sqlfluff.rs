@@ -20,6 +20,7 @@ struct LintOutput {
 pub async fn lint(uri: &Uri, content: &str, config: Config) -> anyhow::Result<Vec<Diagnostic>> {
     let output = Sqlfluff::new("lint", config.sqlfluff_path)
         .dialect(config.dialect)
+        .templater(config.templater)
         .args(&[
             &format!("--stdin-filename={}", uri.path()),
             "--disable-progress-bar",
@@ -117,6 +118,12 @@ impl Sqlfluff {
         }
         self
     }
+    fn templater(mut self, templater: Option<String>) -> Self {
+        if let Some(d) = templater {
+            self.cmd.arg(format!("--templater={d}"));
+        }
+        self
+    }
     fn args(mut self, args: &[&str]) -> Self {
         self.cmd.args(args);
         self
@@ -196,6 +203,7 @@ ORDER BY total_sales DESC
             sql_file_content,
             Config {
                 dialect: Some("snowflake".to_string()),
+                templater: None,
                 sqlfluff_path: None,
             },
         )
@@ -224,6 +232,7 @@ FROm customer
             sql_file_content,
             Config {
                 dialect: Some("snowflake".to_string()),
+                templater: None,
                 sqlfluff_path: None,
             },
         )

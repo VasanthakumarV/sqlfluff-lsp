@@ -16,6 +16,7 @@ pub struct Backend {
 #[derive(Debug, Clone)]
 pub struct Config {
     pub dialect: Option<String>,
+    pub templater: Option<String>,
     pub sqlfluff_path: Option<String>,
 }
 
@@ -26,11 +27,12 @@ struct Watcher {
 }
 
 impl Backend {
-    pub fn new(client: Client, dialect: Option<String>, sqlfluff_path: Option<String>) -> Self {
+    pub fn new(client: Client, dialect: Option<String>, templater: Option<String>, sqlfluff_path: Option<String>) -> Self {
         Self {
             client,
             config: Config {
                 dialect,
+                templater,
                 sqlfluff_path,
             },
             watchers: RwLock::new(HashMap::new()),

@@ -20,6 +20,9 @@ enum Commands {
         /// SQL dialect
         #[arg(short, long)]
         dialect: Option<String>,
+        /// SQL templater
+        #[arg(short, long)]
+        templater: Option<String>,
         /// Absolute path to `sqlfluff`, if not supplied
         /// `sqlfluff` should be in the PATH
         #[arg(short, long)]
@@ -50,10 +53,12 @@ async fn main() {
     match cli.command {
         Commands::Serve {
             dialect,
+            templater,
             sqlfluff_path,
         } => {
-            let (service, socket) =
-                LspService::new(|client| lsp::Backend::new(client, dialect, sqlfluff_path));
+            let (service, socket) = LspService::new(|client| {
+                lsp::Backend::new(client, dialect, templater, sqlfluff_path)
+            });
             let (stdin, stdout) = (tokio::io::stdin(), tokio::io::stdout());
             Server::new(stdin, stdout, socket).serve(service).await;
         }
