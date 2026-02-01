@@ -11,6 +11,6 @@ ci-fmt = "cargo fmt --check"
 ci-clippy = "cargo clippy --all-features -- -D warnings"
 
 [dependencies]
-rust = ">=1.91.1,<1.92"
-sqlfluff = ">=3.5.0,<4"
-rust-src = ">=1.91.1,<2"
+rust = ">=1.92.0,<1.93"
+sqlfluff = ">=4.0.0,<5"
+rust-src = ">=1.92.0,<2"
