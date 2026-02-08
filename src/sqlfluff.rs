@@ -68,6 +68,7 @@ pub async fn lint(uri: &Uri, content: &str, config: Config) -> anyhow::Result<Ve
 pub async fn fmt(uri: &Uri, content: &str, config: Config) -> anyhow::Result<Vec<TextEdit>> {
     let output = Sqlfluff::new("fix", config.sqlfluff_path)
         .dialect(config.dialect)
+        .templater(config.templater)
         .args(&[
             &format!("--stdin-filename={}", uri.path()),
             "--disable-progress-bar",
