@@ -1,6 +1,6 @@
 # sqlfluff-lsp
 
-| [crates.io](https://crates.io/crates/sqlfluff-lsp) |
+| [crates.io](https://crates.io/crates/sqlfluff-lsp) | [conda-forge](https://anaconda.org/channels/conda-forge/packages/sqlfluff-lsp/overview) |
 
 Language Server for the SQL linting & formatting tool, SQLFluff.
 
