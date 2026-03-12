@@ -585,7 +585,7 @@ dependencies = [
 
 [[package]]
 name = "sqlfluff-lsp"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "clap",
  "rootcause",
