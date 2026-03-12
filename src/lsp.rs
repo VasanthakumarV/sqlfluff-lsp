@@ -2,7 +2,6 @@ use std::collections::HashMap;
 
 use tokio::sync::{RwLock, watch};
 use tower_lsp_server::{Client, LanguageServer, jsonrpc::Result, lsp_types::*};
-use tracing::error;
 
 use crate::sqlfluff;
 
@@ -87,7 +86,7 @@ impl LanguageServer for Backend {
             let output = match sqlfluff::fmt(&uri, &content, config).await {
                 Ok(output) => output,
                 Err(error) => {
-                    error!("{error}");
+                    eprintln!("{error}");
                     self.client.show_message(MessageType::ERROR, error).await;
                     return Ok(None);
                 }
@@ -125,7 +124,7 @@ impl LanguageServer for Backend {
                                 client.publish_diagnostics(uri.clone(), diags, None).await;
                             }
                             Err(error) => {
-                                error!("{error}");
+                                eprintln!("{error}");
                                 client.show_message(MessageType::ERROR, error).await;
                             }
                         }
