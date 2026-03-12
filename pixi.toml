@@ -6,9 +6,9 @@ platforms = ["linux-64", "win-64", "osx-64", "osx-arm64", "linux-aarch64"]
 
 [tasks]
 test = "cargo test"
-install = "cargo install --path ."
 ci-fmt = "cargo fmt --check"
 ci-clippy = "cargo clippy --all-features -- -D warnings"
+install = "cargo install --path ."
 
 [dependencies]
 rust = ">=1.92.0,<1.93"

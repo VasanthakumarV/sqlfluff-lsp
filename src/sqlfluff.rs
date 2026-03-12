@@ -1,6 +1,6 @@
 use std::process::Stdio;
 
-use anyhow::Context as _;
+use rootcause::{Report, prelude::ResultExt as _, report};
 use serde::Deserialize;
 use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
@@ -17,7 +17,7 @@ struct LintOutput {
     message: String,
 }
 
-pub async fn lint(uri: &Uri, content: &str, config: Config) -> anyhow::Result<Vec<Diagnostic>> {
+pub async fn lint(uri: &Uri, content: &str, config: Config) -> Result<Vec<Diagnostic>, Report> {
     let output = Sqlfluff::new("lint", config.sqlfluff_path)
         .dialect(config.dialect)
         .templater(config.templater)
@@ -33,13 +33,10 @@ pub async fn lint(uri: &Uri, content: &str, config: Config) -> anyhow::Result<Ve
         .await?;
 
     if output.status.success() {
-        let output: Vec<LintOutput> =
-            serde_json::from_slice(&output.stdout).with_context(|| {
-                format!(
-                    "Failed to serialize the linting output from `sqlfluff`: {}",
-                    String::from_utf8_lossy(&output.stdout)
-                )
-            })?;
+        let output: Vec<LintOutput> = serde_json::from_slice(&output.stdout).attach(format!(
+            "Failed to serialize the linting output from `sqlfluff`: {}",
+            String::from_utf8_lossy(&output.stdout)
+        ))?;
 
         Ok(output
             .into_iter()
@@ -61,11 +58,11 @@ pub async fn lint(uri: &Uri, content: &str, config: Config) -> anyhow::Result<Ve
             })
             .collect::<Vec<_>>())
     } else {
-        anyhow::bail!("`sqlfluff lint` failed: {output:?}")
+        Err(report!("`sqlfluff lint` failed: {output:?}"))
     }
 }
 
-pub async fn fmt(uri: &Uri, content: &str, config: Config) -> anyhow::Result<Vec<TextEdit>> {
+pub async fn fmt(uri: &Uri, content: &str, config: Config) -> Result<Vec<TextEdit>, Report> {
     let output = Sqlfluff::new("fix", config.sqlfluff_path)
         .dialect(config.dialect)
         .templater(config.templater)
@@ -81,7 +78,7 @@ pub async fn fmt(uri: &Uri, content: &str, config: Config) -> anyhow::Result<Vec
 
     let formatted_output = match output.status.code() {
         Some(0 | 1) => String::from_utf8_lossy(&output.stdout).into_owned(),
-        _ => anyhow::bail!("`sqlfluff fix` failed: {output:?}"),
+        _ => return Err(report!("`sqlfluff fix` failed: {output:?}")),
     };
 
     let (mut line_count, mut last_line_len) = (0, 0);
@@ -129,7 +126,7 @@ impl Sqlfluff {
         self.cmd.args(args);
         self
     }
-    async fn execute(mut self, content: &str) -> anyhow::Result<std::process::Output> {
+    async fn execute(mut self, content: &str) -> Result<std::process::Output, Report> {
         let mut child = self
             .cmd
             .kill_on_drop(true)
@@ -137,7 +134,7 @@ impl Sqlfluff {
             .stdin(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
-            .with_context(|| format!("{:?} failed", self.cmd))?;
+            .attach(format!("{:?} failed", self.cmd))?;
 
         {
             let mut stdin = child
