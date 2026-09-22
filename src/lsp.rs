@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use tokio::sync::{RwLock, watch};
 use tower_lsp_server::{Client, LanguageServer, jsonrpc::Result, lsp_types::*};
 
-use crate::sqlfluff;
+use crate::sqlfluff::{self, ParsedFix, ParsedLint};
 
 #[derive(Debug)]
 pub struct Backend {
@@ -21,8 +21,9 @@ pub struct Config {
 
 #[derive(Debug)]
 struct Watcher {
-    tx: watch::Sender<String>,
-    rx: watch::Receiver<String>,
+    content_tx: watch::Sender<String>,
+    content_rx: watch::Receiver<String>,
+    fix_rx: watch::Receiver<(bool, Vec<Option<ParsedFix>>)>,
 }
 
 impl Backend {
@@ -57,6 +58,7 @@ impl LanguageServer for Backend {
                         work_done_progress: Some(false),
                     },
                 })),
+                code_action_provider: Some(CodeActionProviderCapability::Simple(true)),
                 ..ServerCapabilities::default()
             },
         })
@@ -68,6 +70,65 @@ impl LanguageServer for Backend {
         Ok(())
     }
 
+    async fn code_action(
+        &self,
+        CodeActionParams {
+            text_document: TextDocumentIdentifier { uri },
+            range:
+                Range {
+                    start:
+                        Position {
+                            line: start_line, ..
+                        },
+                    end:
+                        Position {
+                            line: mut end_line,
+                            character: end_pos,
+                        },
+                },
+            ..
+        }: CodeActionParams,
+    ) -> Result<Option<CodeActionResponse>> {
+        if end_pos == 0 {
+            end_line -= 1;
+        }
+        if let Some((has_parsing_error, fixes)) = self
+            .watchers
+            .read()
+            .await
+            .get(&uri)
+            .map(|watcher| watcher.fix_rx.borrow().clone())
+        {
+            let filtered_code_actions: Vec<_> = fixes
+                .into_iter()
+                .flatten()
+                .filter_map(
+                    |ParsedFix {
+                         diag_lines,
+                         code_action,
+                     }| {
+                        if diag_lines.0 <= end_line && start_line <= diag_lines.1 {
+                            Some(code_action)
+                        } else {
+                            None
+                        }
+                    },
+                )
+                .collect();
+            if !filtered_code_actions.is_empty() && has_parsing_error {
+                self.client
+                    .show_message(
+                        MessageType::WARNING,
+                        "Fix parsing error(s) [PRS] to avoid applying wrong fixes",
+                    )
+                    .await;
+            }
+            Ok(Some(filtered_code_actions))
+        } else {
+            Ok(None)
+        }
+    }
+
     async fn formatting(
         &self,
         DocumentFormattingParams {
@@ -76,13 +137,23 @@ impl LanguageServer for Backend {
         }: DocumentFormattingParams,
     ) -> Result<Option<Vec<TextEdit>>> {
         let config = self.config.clone();
-        if let Some(content) = self
-            .watchers
-            .read()
-            .await
-            .get(&uri)
-            .map(|bar| bar.rx.borrow().clone())
+        if let Some((content, (has_parsing_error, _))) =
+            self.watchers.read().await.get(&uri).map(|watcher| {
+                (
+                    watcher.content_rx.borrow().clone(),
+                    watcher.fix_rx.borrow().clone(),
+                )
+            })
         {
+            if has_parsing_error {
+                self.client
+                    .show_message(
+                        MessageType::ERROR,
+                        "Fix parsing error(s) [PRS] in the document before formatting",
+                    )
+                    .await;
+                return Ok(None);
+            }
             let output = match sqlfluff::fmt(&uri, &content, config).await {
                 Ok(output) => output,
                 Err(error) => {
@@ -109,19 +180,28 @@ impl LanguageServer for Backend {
             .write()
             .await
             .entry(uri.clone())
-            .and_modify(|watcher| watcher.tx.send(text.clone()).unwrap())
+            .and_modify(|watcher| watcher.content_tx.send(text.clone()).unwrap())
             .or_insert_with(|| {
-                let (tx, rx) = watch::channel(text);
+                let (content_tx, content_rx) = watch::channel(text);
+                let (fix_tx, fix_rx) = watch::channel((false, vec![]));
 
                 let client = self.client.clone();
-                let mut _rx = rx.clone();
+                let mut content_rx_clone = content_rx.clone();
+                let fix_tx_clone = fix_tx.clone();
                 tokio::spawn(async move {
                     loop {
-                        let content = _rx.borrow_and_update().clone();
+                        let content = content_rx_clone.borrow_and_update().clone();
 
                         match sqlfluff::lint(&uri, &content, config.clone()).await {
-                            Ok(diags) => {
-                                client.publish_diagnostics(uri.clone(), diags, None).await;
+                            Ok(ParsedLint {
+                                has_parsing_error,
+                                diagnostics,
+                                fixes,
+                            }) => {
+                                client
+                                    .publish_diagnostics(uri.clone(), diagnostics, None)
+                                    .await;
+                                fix_tx_clone.send((has_parsing_error, fixes)).unwrap();
                             }
                             Err(error) => {
                                 eprintln!("{error}");
@@ -129,13 +209,17 @@ impl LanguageServer for Backend {
                             }
                         }
 
-                        if _rx.changed().await.is_err() {
+                        if content_rx_clone.changed().await.is_err() {
                             break;
                         }
                     }
                 });
 
-                Watcher { tx, rx }
+                Watcher {
+                    content_tx,
+                    content_rx,
+                    fix_rx,
+                }
             });
     }
 
@@ -159,7 +243,7 @@ impl LanguageServer for Backend {
         if let Some(change) = content_changes.first()
             && let Some(watcher) = self.watchers.read().await.get(&uri)
         {
-            watcher.tx.send(change.text.clone()).unwrap();
+            watcher.content_tx.send(change.text.clone()).unwrap();
         }
     }
 
@@ -173,7 +257,7 @@ impl LanguageServer for Backend {
         if let Some(text) = text
             && let Some(watcher) = self.watchers.read().await.get(&uri)
         {
-            watcher.tx.send(text).unwrap();
+            watcher.content_tx.send(text).unwrap();
         }
     }
 }

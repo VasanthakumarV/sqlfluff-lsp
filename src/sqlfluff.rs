@@ -1,23 +1,52 @@
-use std::process::Stdio;
+use std::{collections::HashMap, process::Stdio};
 
 use rootcause::{Report, prelude::ResultExt as _, report};
 use serde::Deserialize;
 use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
-use tower_lsp_server::lsp_types::{Diagnostic, DiagnosticSeverity, Position, Range, TextEdit, Uri};
+use tower_lsp_server::lsp_types::{
+    self, CodeAction, CodeActionOrCommand, Diagnostic, DiagnosticSeverity, Position, Range,
+    TextEdit, Uri, WorkspaceEdit,
+};
 
 use crate::lsp::Config;
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Debug, Clone)]
 struct LintOutput {
-    start_line: usize,
-    start_column: usize,
-    end_line: usize,
-    end_column: usize,
-    message: String,
+    violations: Vec<Violation>,
+}
+#[derive(Deserialize, Debug, Clone)]
+struct Violation {
+    code: String,
+    description: String,
+    start_line_no: usize,
+    start_line_pos: usize,
+    end_line_no: Option<usize>,
+    end_line_pos: Option<usize>,
+    fixes: Option<Vec<Fix>>,
+}
+#[derive(Deserialize, Debug, Clone)]
+pub struct Fix {
+    pub edit: String,
+    pub start_line_no: usize,
+    pub start_line_pos: usize,
+    pub end_line_no: usize,
+    pub end_line_pos: usize,
 }
 
-pub async fn lint(uri: &Uri, content: &str, config: Config) -> Result<Vec<Diagnostic>, Report> {
+#[derive(Debug, Clone)]
+pub struct ParsedLint {
+    pub has_parsing_error: bool,
+    pub diagnostics: Vec<Diagnostic>,
+    pub fixes: Vec<Option<ParsedFix>>,
+}
+#[derive(Debug, Clone, PartialEq)]
+pub struct ParsedFix {
+    pub diag_lines: (u32, u32),
+    pub code_action: CodeActionOrCommand,
+}
+
+pub async fn lint(uri: &Uri, content: &str, config: Config) -> Result<ParsedLint, Report> {
     let output = Sqlfluff::new("lint", config.sqlfluff_path)
         .dialect(config.dialect)
         .templater(config.templater)
@@ -25,7 +54,7 @@ pub async fn lint(uri: &Uri, content: &str, config: Config) -> Result<Vec<Diagno
             &format!("--stdin-filename={}", uri.path()),
             "--disable-progress-bar",
             "--nocolor",
-            "--format=github-annotation",
+            "--format=json",
             "--nofail",
             "-",
         ])
@@ -38,25 +67,81 @@ pub async fn lint(uri: &Uri, content: &str, config: Config) -> Result<Vec<Diagno
             String::from_utf8_lossy(&output.stdout)
         ))?;
 
-        Ok(output
-            .into_iter()
-            .map(|lint| Diagnostic {
-                range: Range {
+        let mut has_parsing_error = false;
+        let (diagnostics, parsed_fixes): (Vec<_>, Vec<_>) = output
+            .first()
+            .expect("lint output should be for only one file")
+            .violations
+            .iter()
+            .map(|lint| {
+                let diag_range = Range {
                     start: Position {
-                        line: (lint.start_line - 1) as u32,
-                        character: (lint.start_column - 1) as u32,
+                        line: (lint.start_line_no - 1) as u32,
+                        character: (lint.start_line_pos - 1) as u32,
                     },
                     end: Position {
-                        line: (lint.end_line - 1) as u32,
-                        character: (lint.end_column - 1) as u32,
+                        line: (lint.end_line_no.unwrap_or(lint.start_line_no) - 1) as u32,
+                        character: (lint.end_line_pos.unwrap_or(lint.start_line_pos) - 1) as u32,
                     },
-                },
-                severity: Some(DiagnosticSeverity::WARNING),
-                source: Some("sqlfluff-lsp".to_string()),
-                message: lint.message,
-                ..Default::default()
+                };
+
+                let diagnostic = Diagnostic {
+                    range: diag_range,
+                    severity: if lint.code == "PRS" {
+                        has_parsing_error = true;
+                        Some(DiagnosticSeverity::ERROR)
+                    } else {
+                        Some(DiagnosticSeverity::WARNING)
+                    },
+                    source: Some("sqlfluff-lsp".to_string()),
+                    message: format!("{}: {}", lint.code, lint.description),
+                    ..Default::default()
+                };
+
+                let parsed_fix = if let Some(fixes) = &lint.fixes {
+                    let edits: Vec<_> = fixes
+                        .iter()
+                        .map(|fix| {
+                            TextEdit::new(
+                                lsp_types::Range::new(
+                                    Position {
+                                        line: (fix.start_line_no - 1) as u32,
+                                        character: (fix.start_line_pos - 1) as u32,
+                                    },
+                                    Position {
+                                        line: (fix.end_line_no - 1) as u32,
+                                        character: (fix.end_line_pos - 1) as u32,
+                                    },
+                                ),
+                                fix.edit.clone(),
+                            )
+                        })
+                        .collect();
+                    Some(ParsedFix {
+                        diag_lines: (diag_range.start.line, diag_range.end.line),
+                        code_action: CodeAction {
+                            title: format!("Fix: {} in L{}", lint.code, lint.start_line_no),
+                            edit: Some(WorkspaceEdit::new(HashMap::from([(
+                                uri.clone(),
+                                edits.clone(),
+                            )]))),
+                            ..Default::default()
+                        }
+                        .into(),
+                    })
+                } else {
+                    None
+                };
+
+                (diagnostic, parsed_fix)
             })
-            .collect::<Vec<_>>())
+            .unzip();
+
+        Ok(ParsedLint {
+            has_parsing_error,
+            diagnostics,
+            fixes: parsed_fixes,
+        })
     } else {
         Err(report!("`sqlfluff lint` failed: {output:?}"))
     }
@@ -152,9 +237,8 @@ impl Sqlfluff {
 mod tests {
     use super::*;
 
-    use std::fs::File;
-    use std::io::Write;
-    use std::str::FromStr as _;
+    use std::{fs::File, io::Write, str::FromStr as _};
+
     use tempfile::tempdir;
 
     #[tokio::test]
@@ -225,7 +309,11 @@ FROm customer
         let mut tmp_file = File::create(&file_path).unwrap();
         writeln!(tmp_file, "{sql_file_content}").unwrap();
 
-        let diagnostics = lint(
+        let ParsedLint {
+            has_parsing_error,
+            diagnostics,
+            fixes,
+        } = lint(
             &Uri::from_str(&file_path.as_os_str().to_string_lossy()).unwrap(),
             sql_file_content,
             Config {
@@ -236,6 +324,150 @@ FROm customer
         )
         .await
         .unwrap();
+
+        let expected_has_parsing_error = false;
+        assert_eq!(has_parsing_error, expected_has_parsing_error);
+
+        let expected_fixes = vec![
+            Some(ParsedFix {
+                diag_lines: (0, 1),
+                code_action: CodeActionOrCommand::CodeAction(CodeAction {
+                    title: "Fix: LT09 in L1".to_string(),
+                    kind: None,
+                    diagnostics: None,
+                    edit: Some(WorkspaceEdit {
+                        changes: Some(HashMap::from([(
+                            Uri::from_str(file_path.to_str().unwrap()).unwrap(),
+                            vec![
+                                TextEdit {
+                                    range: Range {
+                                        start: Position {
+                                            line: 1,
+                                            character: 11,
+                                        },
+                                        end: Position {
+                                            line: 1,
+                                            character: 12,
+                                        },
+                                    },
+                                    new_text: "".to_string(),
+                                },
+                                TextEdit {
+                                    range: Range {
+                                        start: Position {
+                                            line: 1,
+                                            character: 12,
+                                        },
+                                        end: Position {
+                                            line: 1,
+                                            character: 12,
+                                        },
+                                    },
+                                    new_text: "\n".to_string(),
+                                },
+                                TextEdit {
+                                    range: Range {
+                                        start: Position {
+                                            line: 1,
+                                            character: 40,
+                                        },
+                                        end: Position {
+                                            line: 1,
+                                            character: 41,
+                                        },
+                                    },
+                                    new_text: "".to_string(),
+                                },
+                                TextEdit {
+                                    range: Range {
+                                        start: Position {
+                                            line: 1,
+                                            character: 41,
+                                        },
+                                        end: Position {
+                                            line: 1,
+                                            character: 41,
+                                        },
+                                    },
+                                    new_text: "\n".to_string(),
+                                },
+                            ],
+                        )])),
+                        document_changes: None,
+                        change_annotations: None,
+                    }),
+                    command: None,
+                    is_preferred: None,
+                    disabled: None,
+                    data: None,
+                }),
+            }),
+            Some(ParsedFix {
+                diag_lines: (2, 2),
+                code_action: CodeActionOrCommand::CodeAction(CodeAction {
+                    title: "Fix: CP01 in L3".to_string(),
+                    kind: None,
+                    diagnostics: None,
+                    edit: Some(WorkspaceEdit {
+                        changes: Some(HashMap::from([(
+                            Uri::from_str(file_path.to_str().unwrap()).unwrap(),
+                            vec![TextEdit {
+                                range: Range {
+                                    start: Position {
+                                        line: 2,
+                                        character: 0,
+                                    },
+                                    end: Position {
+                                        line: 2,
+                                        character: 4,
+                                    },
+                                },
+                                new_text: "FROM".to_string(),
+                            }],
+                        )])),
+                        document_changes: None,
+                        change_annotations: None,
+                    }),
+                    command: None,
+                    is_preferred: None,
+                    disabled: None,
+                    data: None,
+                }),
+            }),
+            Some(ParsedFix {
+                diag_lines: (3, 3),
+                code_action: CodeActionOrCommand::CodeAction(CodeAction {
+                    title: "Fix: LT01 in L4".to_string(),
+                    kind: None,
+                    diagnostics: None,
+                    edit: Some(WorkspaceEdit {
+                        changes: Some(HashMap::from([(
+                            Uri::from_str(file_path.to_str().unwrap()).unwrap(),
+                            vec![TextEdit {
+                                range: Range {
+                                    start: Position {
+                                        line: 3,
+                                        character: 0,
+                                    },
+                                    end: Position {
+                                        line: 3,
+                                        character: 12,
+                                    },
+                                },
+                                new_text: "".to_string(),
+                            }],
+                        )])),
+                        document_changes: None,
+                        change_annotations: None,
+                    }),
+                    command: None,
+                    is_preferred: None,
+                    disabled: None,
+                    data: None,
+                }),
+            }),
+        ];
+        assert_eq!(fixes, expected_fixes);
 
         let expected_diagnostics = [
             Diagnostic {
