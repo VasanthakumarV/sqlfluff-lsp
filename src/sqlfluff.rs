@@ -98,7 +98,9 @@ pub async fn lint(uri: &Uri, content: &str, config: Config) -> Result<ParsedLint
                     ..Default::default()
                 };
 
-                let parsed_fix = if let Some(fixes) = &lint.fixes {
+                let parsed_fix = if let Some(fixes) = &lint.fixes
+                    && !fixes.is_empty()
+                {
                     let edits: Vec<_> = fixes
                         .iter()
                         .map(|fix| {
