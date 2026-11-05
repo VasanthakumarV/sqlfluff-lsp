@@ -69,6 +69,13 @@ impl LanguageServer for Backend {
                         work_done_progress: Some(false),
                     },
                 })),
+                document_range_formatting_provider: Some(OneOf::Right(
+                    DocumentRangeFormattingOptions {
+                        work_done_progress_options: WorkDoneProgressOptions {
+                            work_done_progress: Some(false),
+                        },
+                    },
+                )),
                 code_action_provider: Some(CodeActionProviderCapability::Simple(true)),
                 ..ServerCapabilities::default()
             },
@@ -166,6 +173,37 @@ impl LanguageServer for Backend {
                 return Ok(None);
             }
             let output = match sqlfluff::fmt(&uri, &content, config).await {
+                Ok(output) => output,
+                Err(error) => {
+                    eprintln!("{error}");
+                    self.client.show_message(MessageType::ERROR, error).await;
+                    return Ok(None);
+                }
+            };
+
+            Ok(Some(output))
+        } else {
+            Ok(None)
+        }
+    }
+
+    async fn range_formatting(
+        &self,
+        DocumentRangeFormattingParams {
+            text_document: TextDocumentIdentifier { uri },
+            range,
+            ..
+        }: DocumentRangeFormattingParams,
+    ) -> Result<Option<Vec<TextEdit>>> {
+        let config = self.config.clone();
+        if let Some(content) = self
+            .watchers
+            .read()
+            .await
+            .get(&uri)
+            .map(|watcher| watcher.content_rx.borrow().clone())
+        {
+            let output = match sqlfluff::fmt_range(&uri, &content, range, config).await {
                 Ok(output) => output,
                 Err(error) => {
                     eprintln!("{error}");

@@ -171,6 +171,65 @@ pub async fn fmt(uri: &Uri, content: &str, config: Config) -> Result<Vec<TextEdi
     )])
 }
 
+/// Formats every line touched by `range`, keeping the indentation those lines share
+pub async fn fmt_range(
+    uri: &Uri,
+    content: &str,
+    range: Range,
+    config: Config,
+) -> Result<Vec<TextEdit>, Report> {
+    let lines: Vec<&str> = content.split_inclusive('\n').collect();
+    let start_line = range.start.line as usize;
+    let end_line = if range.end.character == 0 && range.end.line > range.start.line {
+        range.end.line - 1
+    } else {
+        range.end.line
+    } as usize;
+    let end_line = end_line.min(lines.len().saturating_sub(1));
+    let Some(selected_lines) = lines.get(start_line..=end_line) else {
+        return Ok(vec![]);
+    };
+
+    let selected = selected_lines.concat();
+    let indent = common_indent(selected_lines);
+    let dedented: String = selected_lines
+        .iter()
+        .map(|line| line.strip_prefix(indent).unwrap_or(line))
+        .collect();
+
+    let formatted_output = run_fmt(uri, &dedented, config).await?;
+
+    let mut new_text: String = formatted_output
+        .split_inclusive('\n')
+        .map(|line| {
+            if line.trim().is_empty() {
+                line.to_string()
+            } else {
+                format!("{indent}{line}")
+            }
+        })
+        .collect();
+    if !selected.ends_with('\n') {
+        new_text.truncate(new_text.trim_end_matches('\n').len());
+    }
+    if new_text == selected {
+        return Ok(vec![]);
+    }
+
+    let end = if selected.ends_with('\n') {
+        Position::new(end_line as u32 + 1, 0)
+    } else {
+        Position::new(
+            end_line as u32,
+            lines[end_line].encode_utf16().count() as u32,
+        )
+    };
+    Ok(vec![TextEdit::new(
+        Range::new(Position::new(start_line as u32, 0), end),
+        new_text,
+    )])
+}
+
 async fn run_fmt(uri: &Uri, content: &str, config: Config) -> Result<String, Report> {
     let command = match config.format_command {
         FormatCommand::Fix => "fix",
@@ -199,6 +258,22 @@ async fn run_fmt(uri: &Uri, content: &str, config: Config) -> Result<String, Rep
         Some(0 | 1) => Ok(String::from_utf8_lossy(&output.stdout).into_owned()),
         _ => Err(report!("`sqlfluff {command}` failed: {output:?}")),
     }
+}
+
+fn common_indent<'a>(lines: &[&'a str]) -> &'a str {
+    lines
+        .iter()
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| &line[..line.len() - line.trim_start_matches([' ', '\t']).len()])
+        .reduce(|common, indent| {
+            let shared = common
+                .bytes()
+                .zip(indent.bytes())
+                .take_while(|(a, b)| a == b)
+                .count();
+            &common[..shared]
+        })
+        .unwrap_or_default()
 }
 
 struct Sqlfluff {
@@ -338,6 +413,68 @@ ORDER BY total_sales DESC
             text_edits[0].new_text,
             "select\n    a,\n    b\nfrom t join u on t.id = u.id\n"
         );
+    }
+
+    #[tokio::test]
+    async fn test_fmt_range_formats_only_selected_lines() {
+        let sql_file_content = "SELECT a FROM t;\n\nselect b,c from u;";
+        let expected_text_edit = TextEdit::new(
+            Range::new(Position::new(2, 0), Position::new(2, 18)),
+            "select\n    b,\n    c\nfrom u;".to_string(),
+        );
+
+        let tmp_dir = tempdir().unwrap();
+        let file_path = tmp_dir.path().join("temp.sql");
+
+        let text_edits = fmt_range(
+            &Uri::from_str(&file_path.as_os_str().to_string_lossy()).unwrap(),
+            sql_file_content,
+            Range::new(Position::new(2, 0), Position::new(2, 18)),
+            Config {
+                dialect: Some("snowflake".to_string()),
+                templater: None,
+                sqlfluff_path: None,
+                format_command: FormatCommand::Fix,
+            },
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(text_edits, vec![expected_text_edit]);
+    }
+
+    #[tokio::test]
+    async fn test_fmt_range_extends_to_whole_lines_and_keeps_their_indentation() {
+        let sql_file_content = "\
+WITH x AS (
+    SELECT a,b FROM t
+)
+SELECT * FROM x
+";
+        let expected_text_edit = TextEdit::new(
+            Range::new(Position::new(1, 0), Position::new(2, 0)),
+            "    SELECT\n        a,\n        b\n    FROM t\n".to_string(),
+        );
+
+        let tmp_dir = tempdir().unwrap();
+        let file_path = tmp_dir.path().join("temp.sql");
+
+        // only `a,b` is selected
+        let text_edits = fmt_range(
+            &Uri::from_str(&file_path.as_os_str().to_string_lossy()).unwrap(),
+            sql_file_content,
+            Range::new(Position::new(1, 11), Position::new(1, 14)),
+            Config {
+                dialect: Some("snowflake".to_string()),
+                templater: None,
+                sqlfluff_path: None,
+                format_command: FormatCommand::Fix,
+            },
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(text_edits, vec![expected_text_edit]);
     }
 
     #[tokio::test]
