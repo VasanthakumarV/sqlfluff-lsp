@@ -2,6 +2,7 @@ mod lsp;
 mod sqlfluff;
 
 use clap::{Parser, Subcommand};
+use lsp::FormatCommand;
 use tower_lsp_server::{LspService, Server};
 
 #[derive(Parser)]
@@ -26,6 +27,9 @@ enum Commands {
         /// `sqlfluff` should be in the PATH
         #[arg(short, long)]
         sqlfluff_path: Option<String>,
+        /// `sqlfluff` command used to format documents
+        #[arg(short, long, value_enum, default_value_t = FormatCommand::Fix)]
+        format_command: FormatCommand,
     },
 }
 
@@ -38,9 +42,10 @@ async fn main() {
             dialect,
             templater,
             sqlfluff_path,
+            format_command,
         } => {
             let (service, socket) = LspService::new(|client| {
-                lsp::Backend::new(client, dialect, templater, sqlfluff_path)
+                lsp::Backend::new(client, dialect, templater, sqlfluff_path, format_command)
             });
             let (stdin, stdout) = (tokio::io::stdin(), tokio::io::stdout());
             Server::new(stdin, stdout, socket).serve(service).await;

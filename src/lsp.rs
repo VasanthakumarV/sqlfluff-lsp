@@ -17,6 +17,15 @@ pub struct Config {
     pub dialect: Option<String>,
     pub templater: Option<String>,
     pub sqlfluff_path: Option<String>,
+    pub format_command: FormatCommand,
+}
+
+#[derive(Debug, Clone, Copy, clap::ValueEnum)]
+pub enum FormatCommand {
+    /// `sqlfluff fix`: applies every fixable rule
+    Fix,
+    /// `sqlfluff format`: applies only layout and capitalisation rules
+    Format,
 }
 
 #[derive(Debug)]
@@ -32,6 +41,7 @@ impl Backend {
         dialect: Option<String>,
         templater: Option<String>,
         sqlfluff_path: Option<String>,
+        format_command: FormatCommand,
     ) -> Self {
         Self {
             client,
@@ -39,6 +49,7 @@ impl Backend {
                 dialect,
                 templater,
                 sqlfluff_path,
+                format_command,
             },
             watchers: RwLock::new(HashMap::new()),
         }

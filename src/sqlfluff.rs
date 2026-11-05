@@ -9,7 +9,7 @@ use tower_lsp_server::lsp_types::{
     TextEdit, Uri, WorkspaceEdit,
 };
 
-use crate::lsp::Config;
+use crate::lsp::{Config, FormatCommand};
 
 #[derive(Deserialize, Debug, Clone)]
 struct LintOutput {
@@ -150,23 +150,7 @@ pub async fn lint(uri: &Uri, content: &str, config: Config) -> Result<ParsedLint
 }
 
 pub async fn fmt(uri: &Uri, content: &str, config: Config) -> Result<Vec<TextEdit>, Report> {
-    let output = Sqlfluff::new("fix", config.sqlfluff_path)
-        .dialect(config.dialect)
-        .templater(config.templater)
-        .args(&[
-            &format!("--stdin-filename={}", uri.path()),
-            "--disable-progress-bar",
-            "--nocolor",
-            "--quiet",
-            "-",
-        ])
-        .execute(content)
-        .await?;
-
-    let formatted_output = match output.status.code() {
-        Some(0 | 1) => String::from_utf8_lossy(&output.stdout).into_owned(),
-        _ => return Err(report!("`sqlfluff fix` failed: {output:?}")),
-    };
+    let formatted_output = run_fmt(uri, content, config).await?;
 
     let (mut line_count, mut last_line_len) = (0, 0);
     let mut lines = content.lines().peekable();
@@ -185,6 +169,36 @@ pub async fn fmt(uri: &Uri, content: &str, config: Config) -> Result<Vec<TextEdi
         ),
         formatted_output,
     )])
+}
+
+async fn run_fmt(uri: &Uri, content: &str, config: Config) -> Result<String, Report> {
+    let command = match config.format_command {
+        FormatCommand::Fix => "fix",
+        FormatCommand::Format => "format",
+    };
+    let stdin_filename = format!("--stdin-filename={}", uri.path());
+    let mut args = vec![
+        stdin_filename.as_str(),
+        "--disable-progress-bar",
+        "--nocolor",
+    ];
+    // `sqlfluff format` has no `--quiet` flag
+    if let FormatCommand::Fix = config.format_command {
+        args.push("--quiet");
+    }
+    args.push("-");
+
+    let output = Sqlfluff::new(command, config.sqlfluff_path)
+        .dialect(config.dialect)
+        .templater(config.templater)
+        .args(&args)
+        .execute(content)
+        .await?;
+
+    match output.status.code() {
+        Some(0 | 1) => Ok(String::from_utf8_lossy(&output.stdout).into_owned()),
+        _ => Err(report!("`sqlfluff {command}` failed: {output:?}")),
+    }
 }
 
 struct Sqlfluff {
@@ -289,6 +303,7 @@ ORDER BY total_sales DESC
                 dialect: Some("snowflake".to_string()),
                 templater: None,
                 sqlfluff_path: None,
+                format_command: FormatCommand::Fix,
             },
         )
         .await
@@ -296,6 +311,33 @@ ORDER BY total_sales DESC
 
         assert!(text_edits.len() == 1);
         assert_eq!(text_edits[0], expected_text_edit);
+    }
+
+    #[tokio::test]
+    async fn test_fmt_with_format_command_only_changes_layout() {
+        let sql_file_content = "select a,b from t join u on t.id=u.id\n";
+
+        let tmp_dir = tempdir().unwrap();
+        let file_path = tmp_dir.path().join("temp.sql");
+
+        let text_edits = fmt(
+            &Uri::from_str(&file_path.as_os_str().to_string_lossy()).unwrap(),
+            sql_file_content,
+            Config {
+                dialect: Some("snowflake".to_string()),
+                templater: None,
+                sqlfluff_path: None,
+                format_command: FormatCommand::Format,
+            },
+        )
+        .await
+        .unwrap();
+
+        assert!(text_edits.len() == 1);
+        assert_eq!(
+            text_edits[0].new_text,
+            "select\n    a,\n    b\nfrom t join u on t.id = u.id\n"
+        );
     }
 
     #[tokio::test]
@@ -322,6 +364,7 @@ FROm customer
                 dialect: Some("snowflake".to_string()),
                 templater: None,
                 sqlfluff_path: None,
+                format_command: FormatCommand::Fix,
             },
         )
         .await
